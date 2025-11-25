@@ -3,7 +3,16 @@ import api from '@/utils/api';
 export interface UploadImageResponse {
   url: string;
   filename: string;
+  convertedToWebP?: boolean;
+  format?: string;
   size: number;
+}
+
+export interface ImageInfo {
+  url: string;
+  filename: string;
+  size: number;
+  uploadedAt: string;
 }
 
 export const uploadApi = {
@@ -29,6 +38,14 @@ export const uploadApi = {
     if (!response.data.success) {
       throw new Error(response.data.message || 'Failed to delete image');
     }
+  },
+
+  listImages: async (): Promise<ImageInfo[]> => {
+    const response = await api.get('/upload/images');
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to list images');
+    }
+    return response.data.data;
   },
 };
 

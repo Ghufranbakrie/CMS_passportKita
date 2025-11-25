@@ -9,6 +9,7 @@ import TourEdit from './pages/Tours/TourEdit';
 import UsersList from './pages/Users/UsersList';
 import UserCreate from './pages/Users/UserCreate';
 import UserEdit from './pages/Users/UserEdit';
+import ImageGallery from './pages/Images/ImageGallery';
 import Layout from './components/layout/Layout';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import { Toaster } from './components/ui/sonner';
@@ -55,6 +56,7 @@ function App() {
             <Route path="users" element={<UsersList />} />
             <Route path="users/new" element={<UserCreate />} />
             <Route path="users/edit/:id" element={<UserEdit />} />
+            <Route path="images" element={<ImageGallery />} />
           </Route>
 
           {/* Catch all */}

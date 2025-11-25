@@ -6,8 +6,10 @@ import { useCreateTour } from "@/hooks/useTours";
 import type { CreateTourInput } from "@/api/tour.api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { ImageUpload } from "@/components/tours/ImageUpload";
 import {
   Form,
   FormControl,
@@ -30,88 +32,245 @@ import {
   Star,
   Calendar,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
+import {
+  formatNumber,
+  generateSlug,
+  getTodayDateString,
+  calculateDiscountPercentage,
+  calculateFinalPrice,
+  addArrayField as addArrayFieldUtil,
+  removeArrayField as removeArrayFieldUtil,
+  addHighlight as addHighlightUtil,
+  removeHighlight as removeHighlightUtil,
+  addItinerary as addItineraryUtil,
+  removeItinerary as removeItineraryUtil,
+  addActivity as addActivityUtil,
+  removeActivity as removeActivityUtil,
+} from "@/utils";
 
 // Highlight schema - can be string or object with title & description
 const highlightSchema = z.union([
-  z.string(),
+  z.string().min(1, "Highlight tidak boleh kosong"),
   z.object({
-    title: z.string().min(1),
+    title: z.string().min(1, "Judul highlight wajib diisi"),
     description: z.string().optional(),
   }),
 ]);
 
 // Itinerary schema
 const itinerarySchema = z.object({
-  day: z.number().int().positive(),
-  title: z.string().min(1),
-  activities: z.array(z.string()).min(1),
+  day: z.number().int().positive("Nomor hari harus lebih besar dari 0"),
+  title: z.string().min(1, "Judul hari wajib diisi"),
+  activities: z.array(z.string()).min(1, "Minimal satu aktivitas wajib diisi"),
 });
 
-const tourSchema = z.object({
-  title: z.string().min(3, "Title must be at least 3 characters"),
-  slug: z
-    .string()
-    .regex(
-      /^[a-z0-9-]+$/,
-      "Slug can only contain lowercase letters, numbers, and hyphens"
-    ),
-  image: z.string().url("Invalid image URL"),
-  badge: z
-    .enum(["HOT DEAL", "ALMOST FULL", "NEW", "LAST CALL"])
-    .optional()
-    .or(z.literal("")),
-  badgeColor: z.string().optional().or(z.literal("")),
-  startDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
-  endDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
-  duration: z.string().min(1, "Duration is required"),
-  price: z.number().int().positive("Price must be positive"),
-  originalPrice: z.preprocess(
-    (val) => (val === "" || val === null ? undefined : Number(val)),
-    z.number().int().positive().optional()
-  ),
-  discount: z.preprocess(
-    (val) => (val === "" || val === null ? undefined : Number(val)),
-    z.number().int().nonnegative().optional()
-  ),
-  seatsTaken: z.preprocess(
-    (val) => (val === "" || val === null ? undefined : Number(val)),
-    z.number().int().nonnegative().optional()
-  ),
-  totalSeats: z.preprocess(
-    (val) => (val === "" || val === null ? undefined : Number(val)),
-    z.number().int().positive().optional()
-  ),
-  destinations: z
-    .array(z.string())
-    .min(1, "At least one destination is required"),
-  facilities: z.array(z.string()).min(1, "At least one facility is required"),
-  highlights: z
-    .array(highlightSchema)
-    .min(1, "At least one highlight is required"),
-  itinerary: z.array(itinerarySchema).optional(),
-  included: z
-    .array(z.string())
-    .min(1, "At least one included item is required"),
-  excluded: z.array(z.string()).optional(),
-  category: z.enum(["FEATURED", "UPCOMING", "REGULAR", "CUSTOM"]).optional(),
-});
+const tourSchema = z
+  .object({
+    title: z
+      .string()
+      .min(1, "Judul wajib diisi")
+      .min(3, "Judul minimal 3 karakter")
+      .max(200, "Judul maksimal 200 karakter"),
+    slug: z
+      .string()
+      .min(1, "Slug wajib diisi")
+      .min(3, "Slug minimal 3 karakter")
+      .max(100, "Slug maksimal 100 karakter")
+      .regex(
+        /^[a-z0-9-]+$/,
+        "Slug hanya boleh mengandung huruf kecil, angka, dan tanda hubung"
+      ),
+    image: z
+      .string()
+      .min(1, "URL gambar wajib diisi")
+      .url("Format URL gambar tidak valid"),
+    badge: z
+      .union([
+        z.enum(["HOT DEAL", "ALMOST FULL", "NEW", "LAST CALL"]),
+        z.literal(""),
+        z.undefined(),
+      ])
+      .transform((val) => (val === "" ? undefined : val))
+      .optional(),
+    badgeColor: z
+      .union([z.string(), z.literal(""), z.undefined()])
+      .transform((val) => (val === "" ? undefined : val))
+      .optional(),
+    startDate: z
+      .string()
+      .min(1, "Tanggal mulai wajib diisi")
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal tidak valid (YYYY-MM-DD)")
+      .refine(
+        (date) => {
+          const selectedDate = new Date(date);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          return selectedDate >= today;
+        },
+        {
+          message: "Tanggal mulai tidak boleh lebih kecil dari hari ini",
+        }
+      ),
+    endDate: z
+      .string()
+      .min(1, "Tanggal selesai wajib diisi")
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal tidak valid (YYYY-MM-DD)"),
+    duration: z.string().min(1, "Durasi wajib diisi"),
+    price: z.number().int().positive("Harga harus lebih besar dari 0"),
+    originalPrice: z
+      .union([z.number(), z.string(), z.null(), z.undefined()])
+      .transform((val) => {
+        if (val === "" || val === null || val === undefined) return undefined;
+        const num = typeof val === "string" ? Number(val) : val;
+        if (isNaN(num) || num === 0) return undefined;
+        if (!Number.isInteger(num) || num <= 0) {
+          throw new z.ZodError([
+            {
+              code: z.ZodIssueCode.custom,
+              path: ["originalPrice"],
+              message: "Harga asli harus lebih besar dari 0",
+            },
+          ]);
+        }
+        return num;
+      })
+      .optional(),
+    discount: z
+      .union([z.number(), z.string(), z.null(), z.undefined()])
+      .transform((val) => {
+        if (val === "" || val === null || val === undefined) return undefined;
+        const num = typeof val === "string" ? Number(val) : val;
+        if (isNaN(num) || num === 0) return undefined;
+        if (!Number.isInteger(num) || num < 0) {
+          throw new z.ZodError([
+            {
+              code: z.ZodIssueCode.custom,
+              path: ["discount"],
+              message: "Diskon tidak boleh negatif",
+            },
+          ]);
+        }
+        return num;
+      })
+      .optional(),
+    seatsTaken: z
+      .union([z.number(), z.string(), z.null(), z.undefined()])
+      .transform((val) => {
+        if (val === "" || val === null || val === undefined) return undefined;
+        const num = typeof val === "string" ? Number(val) : val;
+        if (isNaN(num) || num === 0) return undefined;
+        if (!Number.isInteger(num) || num < 0) {
+          throw new z.ZodError([
+            {
+              code: z.ZodIssueCode.custom,
+              path: ["seatsTaken"],
+              message: "Kursi terisi tidak boleh negatif",
+            },
+          ]);
+        }
+        return num;
+      })
+      .optional(),
+    totalSeats: z
+      .union([z.number(), z.string(), z.null(), z.undefined()])
+      .transform((val) => {
+        if (val === "" || val === null || val === undefined) return undefined;
+        const num = typeof val === "string" ? Number(val) : val;
+        if (isNaN(num) || num === 0) return undefined;
+        if (!Number.isInteger(num) || num <= 0) {
+          throw new z.ZodError([
+            {
+              code: z.ZodIssueCode.custom,
+              path: ["totalSeats"],
+              message: "Total kursi harus lebih besar dari 0",
+            },
+          ]);
+        }
+        return num;
+      })
+      .optional(),
+    destinations: z
+      .array(z.string())
+      .min(1, "Minimal satu destinasi wajib diisi"),
+    facilities: z
+      .array(z.string())
+      .min(1, "Minimal satu fasilitas wajib diisi"),
+    highlights: z
+      .array(highlightSchema)
+      .min(1, "Minimal satu highlight wajib diisi"),
+    itinerary: z.array(itinerarySchema).optional(),
+    included: z
+      .array(z.string())
+      .min(1, "Minimal satu item yang termasuk wajib diisi"),
+    excluded: z.array(z.string()).optional(),
+    category: z.enum(["FEATURED", "UPCOMING", "REGULAR", "CUSTOM"]).optional(),
+  })
+  .refine(
+    (data) => {
+      // Validasi bahwa endDate setelah startDate
+      const start = new Date(data.startDate);
+      const end = new Date(data.endDate);
+      return end >= start;
+    },
+    {
+      message: "Tanggal selesai harus setelah atau sama dengan tanggal mulai",
+      path: ["endDate"],
+    }
+  )
+  .refine(
+    (data) => {
+      // Validasi bahwa discount tidak lebih besar dari originalPrice
+      if (data.originalPrice && data.discount) {
+        return data.discount <= data.originalPrice;
+      }
+      return true;
+    },
+    {
+      message: "Diskon tidak boleh lebih besar dari harga asli",
+      path: ["discount"],
+    }
+  )
+  .refine(
+    (data) => {
+      // Validasi bahwa seatsTaken tidak lebih besar dari totalSeats
+      if (data.totalSeats && data.seatsTaken) {
+        return data.seatsTaken <= data.totalSeats;
+      }
+      return true;
+    },
+    {
+      message: "Kursi terisi tidak boleh lebih besar dari total kursi",
+      path: ["seatsTaken"],
+    }
+  );
 
 type TourFormData = z.infer<typeof tourSchema>;
+
+const TABS = [
+  { id: "basic", label: "Info Dasar", icon: Info },
+  { id: "pricing", label: "Harga", icon: DollarSign },
+  { id: "destinations", label: "Lokasi", icon: MapPin },
+  { id: "highlights", label: "Highlight", icon: Star },
+  { id: "itinerary", label: "Itinerary", icon: Calendar },
+  { id: "included", label: "Termasuk", icon: CheckCircle2 },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
 
 export default function TourCreate() {
   const navigate = useNavigate();
   const createMutation = useCreateTour();
-  const [activeTab, setActiveTab] = useState("basic");
+  const [activeTab, setActiveTab] = useState<TabId>("basic");
 
   const form = useForm<TourFormData>({
-    resolver: zodResolver(tourSchema),
+    resolver: zodResolver(tourSchema) as any, // Type assertion untuk handle complex Zod schema
+    mode: "onChange", // Validasi real-time saat field berubah
+    reValidateMode: "onChange", // Re-validate saat field berubah
     defaultValues: {
       title: "",
       slug: "",
@@ -158,6 +317,8 @@ export default function TourCreate() {
 
     const tourData: CreateTourInput = {
       ...data,
+      badge: data.badge,
+      badgeColor: data.badgeColor,
       destinations: data.destinations.filter((d) => d.trim() !== ""),
       facilities: data.facilities.filter((f) => f.trim() !== ""),
       highlights: filteredHighlights,
@@ -176,82 +337,322 @@ export default function TourCreate() {
         setActiveTab("basic");
       },
       onError: (error: any) => {
+        const errorMessage =
+          error?.response?.data?.error?.message ||
+          error?.message ||
+          "Terjadi kesalahan saat membuat tour.";
+        const errorDetails = error?.response?.data?.error?.details;
+
+        // Jika ada error detail dari validasi, tampilkan di form
+        if (errorDetails && Array.isArray(errorDetails)) {
+          errorDetails.forEach((detail: any) => {
+            if (detail.path && detail.path.length > 0) {
+              const fieldName = detail.path[0] as keyof TourFormData;
+              form.setError(fieldName, {
+                type: "server",
+                message: detail.message || errorMessage,
+              });
+            }
+          });
+        }
+
         toast.error("Gagal membuat tour", {
-          description: error?.response?.data?.error?.message || error?.message || "Terjadi kesalahan saat membuat tour.",
+          description: errorMessage,
           duration: 4000,
         });
       },
     });
   };
 
+  // Wrapper functions untuk menggunakan utility functions
   const addArrayField = (
     fieldName: "destinations" | "facilities" | "included" | "excluded"
   ) => {
-    const current = form.getValues(fieldName) || [];
-    form.setValue(fieldName, [...current, ""] as any);
+    addArrayFieldUtil(form, fieldName, "");
   };
 
   const removeArrayField = (
     fieldName: "destinations" | "facilities" | "included" | "excluded",
     index: number
   ) => {
-    const current = form.getValues(fieldName) || [];
-    form.setValue(fieldName, current.filter((_, i) => i !== index) as any);
+    removeArrayFieldUtil(form, fieldName, index);
   };
 
   const addHighlight = () => {
-    const current = form.getValues("highlights") || [];
-    form.setValue("highlights", [
-      ...current,
-      { title: "", description: "" },
-    ] as any);
+    addHighlightUtil(form, "highlights");
   };
 
   const removeHighlight = (index: number) => {
-    const current = form.getValues("highlights") || [];
-    form.setValue("highlights", current.filter((_, i) => i !== index) as any);
+    removeHighlightUtil(form, "highlights", index);
   };
 
   const addItinerary = () => {
-    const current = form.getValues("itinerary") || [];
-    const nextDay =
-      current.length > 0 ? Math.max(...current.map((i) => i.day)) + 1 : 1;
-    form.setValue("itinerary", [
-      ...current,
-      { day: nextDay, title: "", activities: [""] },
-    ] as any);
+    addItineraryUtil(form, "itinerary");
   };
 
   const removeItinerary = (index: number) => {
-    const current = form.getValues("itinerary") || [];
-    form.setValue("itinerary", current.filter((_, i) => i !== index) as any);
+    removeItineraryUtil(form, "itinerary", index);
   };
 
   const addActivity = (itineraryIndex: number) => {
-    const current = form.getValues("itinerary") || [];
-    const itinerary = current[itineraryIndex];
-    if (itinerary) {
-      const updated = [...current];
-      updated[itineraryIndex] = {
-        ...itinerary,
-        activities: [...itinerary.activities, ""],
-      };
-      form.setValue("itinerary", updated as any);
-    }
+    addActivityUtil(form, "itinerary", itineraryIndex);
   };
 
   const removeActivity = (itineraryIndex: number, activityIndex: number) => {
-    const current = form.getValues("itinerary") || [];
-    const itinerary = current[itineraryIndex];
-    if (itinerary && itinerary.activities.length > 1) {
-      const updated = [...current];
-      updated[itineraryIndex] = {
-        ...itinerary,
-        activities: itinerary.activities.filter((_, i) => i !== activityIndex),
-      };
-      form.setValue("itinerary", updated as any);
+    removeActivityUtil(form, "itinerary", itineraryIndex, activityIndex);
+  };
+
+  // Validasi per tab
+  const validateTab = async (tabId: TabId): Promise<boolean> => {
+    const fieldsToValidate: Record<TabId, (keyof TourFormData)[]> = {
+      basic: [
+        "title",
+        "slug",
+        "image",
+        "startDate",
+        "endDate",
+        "duration",
+        "category",
+      ],
+      pricing: ["price"],
+      destinations: ["destinations", "facilities"],
+      highlights: ["highlights"],
+      itinerary: [],
+      included: ["included"],
+    };
+
+    const fields = fieldsToValidate[tabId];
+    if (fields.length === 0) return true;
+
+    const result = await form.trigger(fields as any);
+    return result;
+  };
+
+  // Watch form values untuk reactive validation - watch semua field untuk memastikan reactive
+  const watchedValues = form.watch();
+  const formErrors = form.formState.errors;
+  const formState = form.formState;
+
+  // Cek apakah tab sudah valid - menggunakan watched values untuk reactive updates
+  const isTabValid = useMemo(() => {
+    const values = watchedValues;
+    const errors = formErrors;
+
+    const validations: Record<TabId, () => boolean> = {
+      basic: () => {
+        return !!(
+          values.title &&
+          String(values.title).trim() !== "" &&
+          values.slug &&
+          String(values.slug).trim() !== "" &&
+          values.image &&
+          String(values.image).trim() !== "" &&
+          values.startDate &&
+          String(values.startDate).trim() !== "" &&
+          values.endDate &&
+          String(values.endDate).trim() !== "" &&
+          values.duration &&
+          String(values.duration).trim() !== "" &&
+          values.category &&
+          !errors.title &&
+          !errors.slug &&
+          !errors.image &&
+          !errors.startDate &&
+          !errors.endDate &&
+          !errors.duration &&
+          !errors.category
+        );
+      },
+      pricing: () => {
+        const price = Number(values.price) || 0;
+        const originalPrice = values.originalPrice
+          ? Number(values.originalPrice)
+          : undefined;
+        const discount = values.discount ? Number(values.discount) : undefined;
+
+        // Validasi price harus > 0
+        if (price <= 0 || errors.price) {
+          return false;
+        }
+
+        // Validasi discount tidak boleh lebih besar dari originalPrice
+        if (discount && originalPrice && discount > originalPrice) {
+          return false;
+        }
+
+        // Validasi discount tidak boleh lebih besar dari price jika originalPrice tidak ada
+        if (discount && !originalPrice && discount > price) {
+          return false;
+        }
+
+        return !errors.discount && !errors.originalPrice;
+      },
+      destinations: () => {
+        const destinations = Array.isArray(values.destinations)
+          ? values.destinations.filter((d: string) => d?.trim() !== "")
+          : [];
+        const facilities = Array.isArray(values.facilities)
+          ? values.facilities.filter((f: string) => f?.trim() !== "")
+          : [];
+        return (
+          destinations.length > 0 &&
+          facilities.length > 0 &&
+          !errors.destinations &&
+          !errors.facilities
+        );
+      },
+      highlights: () => {
+        const highlights = Array.isArray(values.highlights)
+          ? values.highlights.filter((h: any) => {
+              if (typeof h === "string") return h.trim() !== "";
+              return h?.title?.trim() !== "" || h?.description?.trim() !== "";
+            })
+          : [];
+        return highlights.length > 0 && !errors.highlights;
+      },
+      itinerary: () => {
+        // Itinerary is optional, so always valid
+        return true;
+      },
+      included: () => {
+        const included = Array.isArray(values.included)
+          ? values.included.filter((i: string) => i?.trim() !== "")
+          : [];
+        return included.length > 0 && !errors.included;
+      },
+    };
+
+    return validations[activeTab]?.() ?? true;
+  }, [watchedValues, formErrors, activeTab, formState]);
+
+  // Navigasi tab
+  const currentTabIndex = TABS.findIndex((tab) => tab.id === activeTab);
+  const isFirstTab = currentTabIndex === 0;
+  const isLastTab = currentTabIndex === TABS.length - 1;
+
+  const handleNext = async () => {
+    // Trigger validation untuk semua field di tab saat ini
+    const isValid = await validateTab(activeTab);
+
+    // Tunggu sebentar untuk memastikan formState ter-update
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Cek ulang isTabValid setelah validasi
+    const currentTabValid = isTabValid;
+
+    if (!isValid || !currentTabValid) {
+      toast.error("Form belum lengkap", {
+        description:
+          "Silakan lengkapi semua field yang wajib diisi sebelum melanjutkan.",
+        duration: 3000,
+      });
+      return;
+    }
+
+    if (!isLastTab) {
+      const nextTab = TABS[currentTabIndex + 1];
+      setActiveTab(nextTab.id);
     }
   };
+
+  const handlePrevious = () => {
+    if (!isFirstTab) {
+      const prevTab = TABS[currentTabIndex - 1];
+      setActiveTab(prevTab.id);
+    }
+  };
+
+  // Trigger validasi saat field berubah untuk update isTabValid
+  useEffect(() => {
+    // Trigger validasi untuk field di tab aktif saat field berubah
+    const fieldsToValidate: Record<TabId, (keyof TourFormData)[]> = {
+      basic: [
+        "title",
+        "slug",
+        "image",
+        "startDate",
+        "endDate",
+        "duration",
+        "category",
+      ],
+      pricing: ["price", "originalPrice", "discount"],
+      destinations: ["destinations", "facilities"],
+      highlights: ["highlights"],
+      itinerary: [],
+      included: ["included"],
+    };
+
+    const fields = fieldsToValidate[activeTab];
+    if (fields.length > 0) {
+      // Trigger validasi tanpa menunggu hasil (untuk update formState.errors)
+      // Gunakan debounce untuk menghindari terlalu banyak validasi
+      const timeoutId = setTimeout(() => {
+        form.trigger(fields as any).catch(() => {
+          // Ignore errors, hanya untuk trigger validasi
+        });
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [watchedValues, activeTab, form]);
+
+  // Progress indicator
+  const completedTabs = useMemo(() => {
+    const values = watchedValues;
+    const errors = formErrors;
+    const completed: TabId[] = [];
+
+    // Basic
+    if (
+      values.title &&
+      values.slug &&
+      values.image &&
+      values.startDate &&
+      values.endDate &&
+      values.duration &&
+      !errors.title &&
+      !errors.slug &&
+      !errors.image
+    ) {
+      completed.push("basic");
+    }
+
+    // Pricing
+    if (values.price && values.price > 0 && !errors.price) {
+      completed.push("pricing");
+    }
+
+    // Destinations
+    const destinations =
+      values.destinations?.filter((d) => d.trim() !== "") || [];
+    const facilities = values.facilities?.filter((f) => f.trim() !== "") || [];
+    if (destinations.length > 0 && facilities.length > 0) {
+      completed.push("destinations");
+    }
+
+    // Highlights
+    const highlights =
+      values.highlights?.filter((h) => {
+        if (typeof h === "string") return h.trim() !== "";
+        return h.title?.trim() !== "" || h.description?.trim() !== "";
+      }) || [];
+    if (highlights.length > 0) {
+      completed.push("highlights");
+    }
+
+    // Itinerary (optional, always considered completed if no errors)
+    if (!errors.itinerary) {
+      completed.push("itinerary");
+    }
+
+    // Included
+    const included = values.included?.filter((i) => i.trim() !== "") || [];
+    if (included.length > 0 && !errors.included) {
+      completed.push("included");
+    }
+
+    return completed;
+  }, [watchedValues, formErrors]);
 
   return (
     <div className="space-y-6">
@@ -260,59 +661,50 @@ export default function TourCreate() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold text-foreground">
-            Create New Tour
-          </h1>
-          <p className="text-muted-foreground mt-2">Add a new tour package</p>
+          <h1 className="text-3xl font-bold text-foreground">Buat Tour Baru</h1>
+          <p className="text-muted-foreground mt-2">
+            Tambahkan paket tour baru
+          </p>
         </div>
       </div>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as TabId)}
+            className="w-full"
+          >
             <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="basic" className="flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                <span className="hidden sm:inline">Basic Info</span>
-              </TabsTrigger>
-              <TabsTrigger value="pricing" className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4" />
-                <span className="hidden sm:inline">Pricing</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="destinations"
-                className="flex items-center gap-2"
-              >
-                <MapPin className="h-4 w-4" />
-                <span className="hidden sm:inline">Locations</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="highlights"
-                className="flex items-center gap-2"
-              >
-                <Star className="h-4 w-4" />
-                <span className="hidden sm:inline">Highlights</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="itinerary"
-                className="flex items-center gap-2"
-              >
-                <Calendar className="h-4 w-4" />
-                <span className="hidden sm:inline">Itinerary</span>
-              </TabsTrigger>
-              <TabsTrigger value="included" className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4" />
-                <span className="hidden sm:inline">Included</span>
-              </TabsTrigger>
+              {TABS.map((tab) => {
+                const Icon = tab.icon;
+                const isCompleted = completedTabs.includes(tab.id);
+                const isActive = activeTab === tab.id;
+                return (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    className={`flex items-center gap-2 relative ${
+                      isCompleted && !isActive ? "text-green-600" : ""
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span className="hidden sm:inline">{tab.label}</span>
+                    {isCompleted && (
+                      <CheckCircle2 className="h-3 w-3 absolute -top-1 -right-1 text-green-600 bg-white rounded-full" />
+                    )}
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
 
             {/* Tab 1: Basic Information */}
             <TabsContent value="basic" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Basic Information</CardTitle>
+                  <CardTitle>Informasi Dasar</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Enter the basic details of your tour package
+                    Masukkan detail dasar paket tour Anda
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -321,13 +713,28 @@ export default function TourCreate() {
                     name="title"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Title</FormLabel>
+                        <FormLabel>Judul Tour *</FormLabel>
                         <FormControl>
                           <Input
                             placeholder="Winter Wonderland Japan Tour"
                             {...field}
+                            onChange={(e) => {
+                              field.onChange(e);
+                              // Auto-generate slug dari title
+                              const title = e.target.value;
+                              if (title && !form.getValues("slug")) {
+                                const autoSlug = generateSlug(title);
+                                form.setValue("slug", autoSlug, {
+                                  shouldValidate: false,
+                                });
+                              }
+                            }}
                           />
                         </FormControl>
+                        <FormDescription>
+                          Masukkan judul paket tour yang menarik dan deskriptif.
+                          Slug akan otomatis dibuat dari judul.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -338,13 +745,25 @@ export default function TourCreate() {
                     name="slug"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Slug</FormLabel>
+                        <FormLabel>Slug *</FormLabel>
                         <FormControl>
-                          <Input placeholder="winter-japan-tour" {...field} />
+                          <Input
+                            placeholder="winter-japan-tour"
+                            {...field}
+                            onChange={(e) => {
+                              // Auto-format slug (lowercase, replace spaces with hyphens)
+                              const value = e.target.value
+                                .toLowerCase()
+                                .replace(/\s+/g, "-")
+                                .replace(/[^a-z0-9-]/g, "");
+                              field.onChange(value);
+                            }}
+                          />
                         </FormControl>
                         <FormDescription>
-                          URL-friendly identifier (lowercase, numbers, hyphens
-                          only)
+                          Identifier untuk URL (huruf kecil, angka, dan tanda
+                          hubung saja). Akan otomatis dibuat dari judul, atau
+                          bisa diubah manual.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -356,13 +775,27 @@ export default function TourCreate() {
                     name="image"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Image URL</FormLabel>
                         <FormControl>
-                          <Input
-                            placeholder="https://example.com/image.jpg"
-                            {...field}
+                          <ImageUpload
+                            value={field.value}
+                            onChange={field.onChange}
+                            label="Gambar Tour *"
+                            description="Upload gambar dari komputer atau masukkan URL gambar. Format: JPEG, PNG, WebP, GIF. Maksimal 5MB."
                           />
                         </FormControl>
+                        <FormDescription>
+                          <span className="font-semibold text-foreground">
+                            Ukuran yang direkomendasikan:
+                          </span>
+                          <br />• <strong>Tour Card:</strong> 1200 x 800 px
+                          (rasio 3:2) atau 1600 x 900 px (rasio 16:9)
+                          <br />• <strong>Tour Detail Hero:</strong> 1920 x 1080
+                          px (rasio 16:9) atau lebih besar
+                          <br />• <strong>Format:</strong> JPEG, PNG, atau WebP
+                          (maks 5MB)
+                          <br />• <strong>Tips:</strong> Gunakan gambar
+                          landscape dengan kualitas tinggi untuk hasil terbaik
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -374,10 +807,18 @@ export default function TourCreate() {
                       name="startDate"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Start Date</FormLabel>
+                          <FormLabel>Tanggal Mulai *</FormLabel>
                           <FormControl>
-                            <Input type="date" {...field} />
+                            <Input
+                              type="date"
+                              {...field}
+                              min={getTodayDateString()}
+                            />
                           </FormControl>
+                          <FormDescription>
+                            Tanggal mulai tour (tidak boleh lebih kecil dari
+                            hari ini)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -388,10 +829,20 @@ export default function TourCreate() {
                       name="endDate"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>End Date</FormLabel>
+                          <FormLabel>Tanggal Selesai *</FormLabel>
                           <FormControl>
-                            <Input type="date" {...field} />
+                            <Input
+                              type="date"
+                              {...field}
+                              min={
+                                form.watch("startDate") || getTodayDateString()
+                              }
+                            />
                           </FormControl>
+                          <FormDescription>
+                            Tanggal selesai tour (harus setelah atau sama dengan
+                            tanggal mulai)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -404,10 +855,13 @@ export default function TourCreate() {
                       name="duration"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Duration</FormLabel>
+                          <FormLabel>Durasi *</FormLabel>
                           <FormControl>
                             <Input placeholder="8D7N" {...field} />
                           </FormControl>
+                          <FormDescription>
+                            Durasi tour, contoh: 8D7N (8 Hari 7 Malam)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -418,7 +872,7 @@ export default function TourCreate() {
                       name="category"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Category</FormLabel>
+                          <FormLabel>Kategori</FormLabel>
                           <FormControl>
                             <Select {...field}>
                               <option value="REGULAR">REGULAR</option>
@@ -427,6 +881,10 @@ export default function TourCreate() {
                               <option value="CUSTOM">CUSTOM</option>
                             </Select>
                           </FormControl>
+                          <FormDescription>
+                            Pilih kategori tour (FEATURED, UPCOMING, REGULAR,
+                            atau CUSTOM)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -440,9 +898,9 @@ export default function TourCreate() {
             <TabsContent value="pricing" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Pricing & Settings</CardTitle>
+                  <CardTitle>Harga & Pengaturan</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Configure pricing, discounts, and tour settings
+                    Konfigurasi harga, diskon, dan pengaturan tour
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -452,17 +910,32 @@ export default function TourCreate() {
                       name="price"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Price (Rupiah) *</FormLabel>
+                          <FormLabel>Harga (Rupiah) *</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="29500000"
-                              {...field}
-                              onChange={(e) =>
-                                field.onChange(parseInt(e.target.value) || 0)
-                              }
+                            <NumberInput
+                              placeholder="29.500.000"
+                              value={field.value}
+                              onChange={(value) => {
+                                const numValue = value ?? 0;
+                                field.onChange(numValue);
+                                // Jika harga asli belum diisi atau kosong, set harga asli = harga
+                                const originalPrice =
+                                  form.getValues("originalPrice");
+                                if (
+                                  (!originalPrice || originalPrice === 0) &&
+                                  numValue > 0
+                                ) {
+                                  form.setValue("originalPrice", numValue, {
+                                    shouldValidate: false,
+                                  });
+                                }
+                              }}
                             />
                           </FormControl>
+                          <FormDescription>
+                            Harga paket tour dalam Rupiah. Format otomatis
+                            dengan titik setiap 3 angka.
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -473,22 +946,63 @@ export default function TourCreate() {
                       name="originalPrice"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Original Price (Optional)</FormLabel>
+                          <FormLabel>Harga Asli (Opsional)</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="34000000"
-                              {...field}
-                              value={field.value || ""}
-                              onChange={(e) =>
-                                field.onChange(
-                                  e.target.value
-                                    ? parseInt(e.target.value)
-                                    : undefined
-                                )
-                              }
+                            <NumberInput
+                              placeholder="34.000.000"
+                              value={field.value}
+                              onChange={(value) => {
+                                // Pastikan value tidak NaN
+                                const numValue =
+                                  value !== undefined && !isNaN(value)
+                                    ? value
+                                    : undefined;
+                                field.onChange(numValue);
+
+                                const price = form.getValues("price");
+                                const discount = form.getValues("discount");
+
+                                // Jika originalPrice dihapus (undefined), set ke price
+                                if (
+                                  numValue === undefined ||
+                                  numValue === 0 ||
+                                  isNaN(numValue as any)
+                                ) {
+                                  if (price > 0 && !isNaN(price)) {
+                                    form.setValue("originalPrice", price, {
+                                      shouldValidate: false,
+                                    });
+                                  } else {
+                                    form.setValue("originalPrice", undefined, {
+                                      shouldValidate: false,
+                                    });
+                                  }
+                                  return;
+                                }
+
+                                // Validasi: jika discount lebih besar dari originalPrice, reset discount
+                                if (
+                                  discount &&
+                                  !isNaN(discount) &&
+                                  discount > numValue
+                                ) {
+                                  form.setValue("discount", numValue, {
+                                    shouldValidate: true,
+                                  });
+                                  toast.warning("Diskon disesuaikan", {
+                                    description: `Diskon tidak boleh lebih besar dari harga asli (Rp ${formatNumber(
+                                      numValue
+                                    )}). Diskon telah disesuaikan.`,
+                                    duration: 3000,
+                                  });
+                                }
+                              }}
                             />
                           </FormControl>
+                          <FormDescription>
+                            Harga asli sebelum diskon. Jika tidak diisi, akan
+                            sama dengan harga. Harus lebih besar dari diskon.
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -498,80 +1012,189 @@ export default function TourCreate() {
                   <FormField
                     control={form.control}
                     name="discount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Discount (Optional)</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            placeholder="4500000"
-                            {...field}
-                            value={field.value || ""}
-                            onChange={(e) =>
-                              field.onChange(
-                                e.target.value
-                                  ? parseInt(e.target.value)
-                                  : undefined
-                              )
-                            }
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                    render={({ field }) => {
+                      const originalPrice = form.watch("originalPrice");
+                      const price = form.watch("price");
+                      const discountValue = field.value || 0;
+                      const finalPrice = originalPrice
+                        ? calculateFinalPrice(originalPrice, discountValue)
+                        : price - discountValue;
+                      const discountPercent = originalPrice
+                        ? calculateDiscountPercentage(
+                            originalPrice,
+                            discountValue
+                          )
+                        : price > 0
+                        ? calculateDiscountPercentage(price, discountValue)
+                        : 0;
+
+                      return (
+                        <FormItem>
+                          <FormLabel>Diskon (Opsional)</FormLabel>
+                          <FormControl>
+                            <NumberInput
+                              placeholder="4.500.000"
+                              value={field.value}
+                              onChange={(value) => {
+                                // Pastikan value tidak NaN
+                                const numValue =
+                                  value !== undefined && !isNaN(value)
+                                    ? value
+                                    : undefined;
+                                field.onChange(numValue);
+
+                                // Validasi: jika discount lebih besar dari originalPrice, set ke originalPrice
+                                const originalPrice =
+                                  form.getValues("originalPrice");
+                                const price = form.getValues("price");
+                                const maxDiscount =
+                                  originalPrice && !isNaN(originalPrice)
+                                    ? originalPrice
+                                    : price && !isNaN(price)
+                                    ? price
+                                    : undefined;
+
+                                if (
+                                  maxDiscount &&
+                                  numValue &&
+                                  !isNaN(numValue) &&
+                                  numValue > maxDiscount
+                                ) {
+                                  form.setValue("discount", maxDiscount, {
+                                    shouldValidate: true,
+                                  });
+                                  toast.error("Diskon terlalu besar", {
+                                    description: `Diskon tidak boleh lebih besar dari harga asli (Rp ${formatNumber(
+                                      maxDiscount
+                                    )}).`,
+                                    duration: 3000,
+                                  });
+                                }
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Besar diskon dalam Rupiah. Tidak boleh lebih besar
+                            dari harga asli.
+                            {discountValue > 0 && (
+                              <span className="block mt-1 text-xs">
+                                Diskon: {discountPercent}% | Harga akhir: Rp{" "}
+                                {formatNumber(Math.max(0, finalPrice))}
+                              </span>
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
                   />
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField
                       control={form.control}
-                      name="seatsTaken"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Seats Taken (Optional)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="12"
-                              {...field}
-                              value={field.value || ""}
-                              onChange={(e) =>
-                                field.onChange(
-                                  e.target.value
-                                    ? parseInt(e.target.value)
-                                    : undefined
-                                )
-                              }
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
+                      name="totalSeats"
+                      render={({ field }) => {
+                        const seatsTaken = form.watch("seatsTaken");
+                        const totalSeats = field.value || 0;
+                        const availableSeats = totalSeats - (seatsTaken || 0);
+
+                        return (
+                          <FormItem>
+                            <FormLabel>Total Kursi (Opsional)</FormLabel>
+                            <FormControl>
+                              <NumberInput
+                                placeholder="20"
+                                value={field.value}
+                                onChange={(value) => {
+                                  const numValue = value ?? undefined;
+                                  field.onChange(numValue);
+                                  // Validasi: jika totalSeats lebih kecil dari seatsTaken, reset seatsTaken
+                                  if (
+                                    numValue &&
+                                    seatsTaken &&
+                                    seatsTaken > numValue
+                                  ) {
+                                    form.setValue("seatsTaken", numValue, {
+                                      shouldValidate: true,
+                                    });
+                                    toast.warning("Kursi terisi disesuaikan", {
+                                      description:
+                                        "Total kursi tidak boleh lebih kecil dari kursi terisi. Kursi terisi telah disesuaikan.",
+                                      duration: 3000,
+                                    });
+                                  }
+                                }}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Total kursi yang tersedia untuk tour ini.
+                              {seatsTaken && totalSeats > 0 && (
+                                <span className="block mt-1 text-xs">
+                                  Terisi: {seatsTaken} | Tersedia:{" "}
+                                  {Math.max(0, availableSeats)} kursi
+                                </span>
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
                     />
 
                     <FormField
                       control={form.control}
-                      name="totalSeats"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Total Seats (Optional)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="20"
-                              {...field}
-                              value={field.value || ""}
-                              onChange={(e) =>
-                                field.onChange(
-                                  e.target.value
-                                    ? parseInt(e.target.value)
-                                    : undefined
-                                )
-                              }
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
+                      name="seatsTaken"
+                      render={({ field }) => {
+                        const totalSeats = form.watch("totalSeats");
+                        const seatsTaken = field.value || 0;
+                        const availableSeats = totalSeats
+                          ? totalSeats - seatsTaken
+                          : undefined;
+
+                        return (
+                          <FormItem>
+                            <FormLabel>Kursi Terisi (Opsional)</FormLabel>
+                            <FormControl>
+                              <NumberInput
+                                placeholder="12"
+                                value={field.value}
+                                onChange={(value) => {
+                                  const numValue = value ?? undefined;
+                                  field.onChange(numValue);
+                                  // Validasi: jika seatsTaken lebih besar dari totalSeats, set ke totalSeats
+                                  if (
+                                    totalSeats &&
+                                    numValue &&
+                                    numValue > totalSeats
+                                  ) {
+                                    form.setValue("seatsTaken", totalSeats, {
+                                      shouldValidate: true,
+                                    });
+                                    toast.error("Kursi terisi terlalu banyak", {
+                                      description: `Kursi terisi tidak boleh lebih besar dari total kursi (${totalSeats}).`,
+                                      duration: 3000,
+                                    });
+                                  }
+                                }}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Jumlah kursi yang sudah terisi. Tidak boleh lebih
+                              besar dari total kursi.
+                              {totalSeats && (
+                                <span className="block mt-1 text-xs">
+                                  Tersedia:{" "}
+                                  {availableSeats !== undefined
+                                    ? availableSeats
+                                    : "?"}{" "}
+                                  kursi
+                                </span>
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
                     />
                   </div>
 
@@ -584,13 +1207,17 @@ export default function TourCreate() {
                           <FormLabel>Badge</FormLabel>
                           <FormControl>
                             <Select {...field} value={field.value || ""}>
-                              <option value="">None</option>
+                              <option value="">Tidak Ada</option>
                               <option value="HOT DEAL">HOT DEAL</option>
                               <option value="ALMOST FULL">ALMOST FULL</option>
                               <option value="NEW">NEW</option>
                               <option value="LAST CALL">LAST CALL</option>
                             </Select>
                           </FormControl>
+                          <FormDescription>
+                            Pilih badge untuk menandai tour (HOT DEAL, ALMOST
+                            FULL, NEW, atau LAST CALL)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -601,10 +1228,14 @@ export default function TourCreate() {
                       name="badgeColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Badge Color</FormLabel>
+                          <FormLabel>Warna Badge</FormLabel>
                           <FormControl>
                             <Input placeholder="bg-red-500" {...field} />
                           </FormControl>
+                          <FormDescription>
+                            Warna badge dalam format Tailwind CSS (contoh:
+                            bg-red-500, bg-blue-600)
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -618,9 +1249,9 @@ export default function TourCreate() {
             <TabsContent value="destinations" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Destinations</CardTitle>
+                  <CardTitle>Destinasi</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Add all destinations for this tour
+                    Tambahkan semua destinasi untuk tour ini
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -644,6 +1275,9 @@ export default function TourCreate() {
                       )}
                     </div>
                   ))}
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Minimal satu destinasi wajib diisi
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -651,16 +1285,16 @@ export default function TourCreate() {
                     onClick={() => addArrayField("destinations")}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Destination
+                    Tambah Destinasi
                   </Button>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Facilities</CardTitle>
+                  <CardTitle>Fasilitas</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    List all facilities included in this tour
+                    Daftar semua fasilitas yang termasuk dalam tour ini
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -682,6 +1316,9 @@ export default function TourCreate() {
                       )}
                     </div>
                   ))}
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Minimal satu fasilitas wajib diisi
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -689,7 +1326,7 @@ export default function TourCreate() {
                     onClick={() => addArrayField("facilities")}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Facility
+                    Tambah Fasilitas
                   </Button>
                 </CardContent>
               </Card>
@@ -699,10 +1336,10 @@ export default function TourCreate() {
             <TabsContent value="highlights" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Highlights</CardTitle>
+                  <CardTitle>Highlight</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Add highlights with title and description to showcase tour
-                    features
+                    Tambahkan highlight dengan judul dan deskripsi untuk
+                    menampilkan fitur tour
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -729,7 +1366,7 @@ export default function TourCreate() {
                         name={`highlights.${index}.title`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Title *</FormLabel>
+                            <FormLabel>Judul *</FormLabel>
                             <FormControl>
                               <Input
                                 placeholder="Winter Illumination Festival"
@@ -753,6 +1390,10 @@ export default function TourCreate() {
                                 }}
                               />
                             </FormControl>
+                            <FormDescription>
+                              Judul highlight yang menarik untuk menampilkan
+                              fitur unggulan tour
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -762,7 +1403,7 @@ export default function TourCreate() {
                         name={`highlights.${index}.description`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Description (Optional)</FormLabel>
+                            <FormLabel>Deskripsi (Opsional)</FormLabel>
                             <FormControl>
                               <Textarea
                                 placeholder="Festival lampu musim dingin paling iconic se-Asia ✨🏮"
@@ -787,12 +1428,18 @@ export default function TourCreate() {
                                 rows={3}
                               />
                             </FormControl>
+                            <FormDescription>
+                              Deskripsi detail tentang highlight ini (opsional)
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
                     </div>
                   ))}
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Minimal satu highlight wajib diisi
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -800,7 +1447,7 @@ export default function TourCreate() {
                     onClick={addHighlight}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Highlight
+                    Tambah Highlight
                   </Button>
                 </CardContent>
               </Card>
@@ -812,7 +1459,7 @@ export default function TourCreate() {
                 <CardHeader>
                   <CardTitle>Itinerary</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Create a day-by-day itinerary with activities for your tour
+                    Buat itinerary harian dengan aktivitas untuk tour Anda
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -837,7 +1484,7 @@ export default function TourCreate() {
                         name={`itinerary.${index}.day`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Day Number</FormLabel>
+                            <FormLabel>Nomor Hari</FormLabel>
                             <FormControl>
                               <Input
                                 type="number"
@@ -854,6 +1501,9 @@ export default function TourCreate() {
                                 }}
                               />
                             </FormControl>
+                            <FormDescription>
+                              Nomor hari dalam itinerary (1, 2, 3, dst.)
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -863,20 +1513,27 @@ export default function TourCreate() {
                         name={`itinerary.${index}.title`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Day Title *</FormLabel>
+                            <FormLabel>Judul Hari *</FormLabel>
                             <FormControl>
                               <Input
                                 placeholder="Arrival Tokyo - Hotel Check In"
                                 {...field}
                               />
                             </FormControl>
+                            <FormDescription>
+                              Judul untuk hari ini, contoh: "Arrival Tokyo -
+                              Hotel Check In"
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
                       <div className="space-y-2">
-                        <Label>Activities *</Label>
-                        {item.activities.map((activity, activityIndex) => (
+                        <Label>Aktivitas *</Label>
+                        <div className="text-xs text-muted-foreground">
+                          Minimal satu aktivitas wajib diisi untuk setiap hari
+                        </div>
+                        {item.activities.map((_activity, activityIndex) => (
                           <div key={activityIndex} className="flex gap-2">
                             <Input
                               {...form.register(
@@ -905,7 +1562,7 @@ export default function TourCreate() {
                           onClick={() => addActivity(index)}
                         >
                           <Plus className="h-4 w-4 mr-2" />
-                          Add Activity
+                          Tambah Aktivitas
                         </Button>
                       </div>
                     </div>
@@ -917,7 +1574,7 @@ export default function TourCreate() {
                     onClick={addItinerary}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Day
+                    Tambah Hari
                   </Button>
                 </CardContent>
               </Card>
@@ -927,9 +1584,9 @@ export default function TourCreate() {
             <TabsContent value="included" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Included</CardTitle>
+                  <CardTitle>Termasuk</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    List all items included in the tour package
+                    Daftar semua item yang termasuk dalam paket tour
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -951,6 +1608,9 @@ export default function TourCreate() {
                       )}
                     </div>
                   ))}
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Minimal satu item wajib diisi
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -958,16 +1618,16 @@ export default function TourCreate() {
                     onClick={() => addArrayField("included")}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Item
+                    Tambah Item
                   </Button>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Excluded</CardTitle>
+                  <CardTitle>Tidak Termasuk</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    List items NOT included in the tour package
+                    Daftar item yang TIDAK termasuk dalam paket tour
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -989,6 +1649,9 @@ export default function TourCreate() {
                       )}
                     </div>
                   ))}
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Opsional - daftar item yang tidak termasuk dalam paket
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
@@ -996,29 +1659,53 @@ export default function TourCreate() {
                     onClick={() => addArrayField("excluded")}
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Item
+                    Tambah Item
                   </Button>
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
 
-          {/* Action Buttons - Always visible */}
+          {/* Action Buttons - Navigation and Submit */}
           <div className="flex gap-4 pt-4 border-t">
             <Button
               type="button"
               variant="outline"
               onClick={() => navigate("/tours")}
             >
-              Cancel
+              Batal
             </Button>
-            <Button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="ml-auto"
-            >
-              {createMutation.isPending ? "Creating..." : "Create Tour"}
-            </Button>
+
+            <div className="flex gap-2 ml-auto">
+              {!isFirstTab && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handlePrevious}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-2" />
+                  Sebelumnya
+                </Button>
+              )}
+
+              {!isLastTab ? (
+                <Button
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!isTabValid}
+                >
+                  Selanjutnya
+                  <ChevronRight className="h-4 w-4 ml-2" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  disabled={createMutation.isPending || !isTabValid}
+                >
+                  {createMutation.isPending ? "Membuat..." : "Buat Tour"}
+                </Button>
+              )}
+            </div>
           </div>
         </form>
       </Form>

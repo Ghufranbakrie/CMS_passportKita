@@ -3,6 +3,7 @@ import {
   LayoutDashboard, 
   MapPin, 
   Users,
+  Image as ImageIcon,
   Menu,
   X 
 } from 'lucide-react';
@@ -25,6 +26,11 @@ const menuItems = [
     title: 'Users',
     icon: Users,
     path: '/users',
+  },
+  {
+    title: 'Images',
+    icon: ImageIcon,
+    path: '/images',
   },
 ];
 

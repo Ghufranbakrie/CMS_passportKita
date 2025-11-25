@@ -23,6 +23,7 @@ import { Select } from '@/components/ui/select';
 import { ArrowLeft, Plus, X, Info, DollarSign, MapPin, Star, Calendar, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useState } from 'react';
+import { ImageUpload } from '@/components/tours/ImageUpload';
 
 // Highlight schema - can be string or object with title & description
 const highlightSchema = z.union([
@@ -330,10 +331,27 @@ export default function TourEdit() {
                     name="image"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Image URL</FormLabel>
+                        <FormLabel>Gambar Tour *</FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <ImageUpload
+                            value={field.value}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                          />
                         </FormControl>
+                        <FormDescription>
+                          Upload gambar utama untuk tour ini atau masukkan URL gambar.
+                          <br />
+                          <span className="font-semibold text-foreground">Ukuran yang direkomendasikan:</span>
+                          <br />
+                          • <strong>Tour Card:</strong> 1200 x 800 px (rasio 3:2) atau 1600 x 900 px (rasio 16:9)
+                          <br />
+                          • <strong>Tour Detail Hero:</strong> 1920 x 1080 px (rasio 16:9) atau lebih besar
+                          <br />
+                          • <strong>Format:</strong> JPEG, PNG, atau WebP (maks 5MB)
+                          <br />
+                          • <strong>Tips:</strong> Gunakan gambar landscape dengan kualitas tinggi untuk hasil terbaik
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
