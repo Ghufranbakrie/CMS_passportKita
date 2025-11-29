@@ -5,7 +5,9 @@ import {
   Users,
   Image as ImageIcon,
   Menu,
-  X 
+  X,
+  UserCircle,
+  Calendar,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -21,6 +23,16 @@ const menuItems = [
     title: 'Tours',
     icon: MapPin,
     path: '/tours',
+  },
+  {
+    title: 'Customers',
+    icon: UserCircle,
+    path: '/customers',
+  },
+  {
+    title: 'Bookings',
+    icon: Calendar,
+    path: '/bookings',
   },
   {
     title: 'Users',

@@ -9,6 +9,12 @@ import TourEdit from './pages/Tours/TourEdit';
 import UsersList from './pages/Users/UsersList';
 import UserCreate from './pages/Users/UserCreate';
 import UserEdit from './pages/Users/UserEdit';
+import CustomersList from './pages/Customers/CustomersList';
+import CustomerCreate from './pages/Customers/CustomerCreate';
+import CustomerEdit from './pages/Customers/CustomerEdit';
+import BookingsList from './pages/Bookings/BookingsList';
+import BookingCreate from './pages/Bookings/BookingCreate';
+import BookingDetail from './pages/Bookings/BookingDetail';
 import ImageGallery from './pages/Images/ImageGallery';
 import Layout from './components/layout/Layout';
 import ProtectedRoute from './components/layout/ProtectedRoute';
@@ -53,6 +59,12 @@ function App() {
             <Route path="tours" element={<ToursList />} />
             <Route path="tours/new" element={<TourCreate />} />
             <Route path="tours/edit/:id" element={<TourEdit />} />
+            <Route path="customers" element={<CustomersList />} />
+            <Route path="customers/new" element={<CustomerCreate />} />
+            <Route path="customers/edit/:id" element={<CustomerEdit />} />
+            <Route path="bookings" element={<BookingsList />} />
+            <Route path="bookings/new" element={<BookingCreate />} />
+            <Route path="bookings/:id" element={<BookingDetail />} />
             <Route path="users" element={<UsersList />} />
             <Route path="users/new" element={<UserCreate />} />
             <Route path="users/edit/:id" element={<UserEdit />} />

@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useTours, useDeleteTour, type Tour } from '@/hooks/useTours';
+import { useDebounce } from '@/hooks/useDebounce';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -10,8 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Edit, Trash2, Eye } from 'lucide-react';
+import { Plus, Edit, Trash2, Eye, Search } from 'lucide-react';
 import { useState } from 'react';
+import * as React from 'react';
 import {
   Dialog,
   DialogContent,
@@ -20,13 +22,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import { Pagination } from '@/components/ui/pagination';
 
 export default function ToursList() {
   const navigate = useNavigate();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [tourToDelete, setTourToDelete] = useState<Tour | null>(null);
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [page, setPage] = useState(1);
+  const debouncedSearch = useDebounce(search, 500);
 
-  const { data, isLoading, error } = useTours({ limit: 100 });
+  const { data, isLoading, error } = useTours({ 
+    limit: 10,
+    page,
+    search: debouncedSearch || undefined,
+    category: categoryFilter !== 'ALL' ? categoryFilter as any : undefined,
+  });
+
+  // Reset to page 1 when search or filter changes
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, categoryFilter]);
   const deleteMutation = useDeleteTour();
 
   const handleDelete = (tour: Tour) => {
@@ -80,7 +99,32 @@ export default function ToursList() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All Tours ({tours.length})</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>
+              All Tours {data?.pagination?.total ? `(${data.pagination.total})` : ''}
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search tours..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 w-64"
+                />
+              </div>
+              <Select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value="ALL">All Categories</option>
+                <option value="FEATURED">Featured</option>
+                <option value="UPCOMING">Upcoming</option>
+                <option value="REGULAR">Regular</option>
+                <option value="CUSTOM">Custom</option>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {tours.length === 0 ? (
@@ -145,6 +189,15 @@ export default function ToursList() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {data?.pagination && data.pagination.totalPages > 1 && (
+            <Pagination
+              page={data.pagination.page}
+              totalPages={data.pagination.totalPages}
+              total={data.pagination.total}
+              limit={data.pagination.limit}
+              onPageChange={(newPage) => setPage(newPage)}
+            />
           )}
         </CardContent>
       </Card>
